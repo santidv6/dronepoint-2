@@ -92,7 +92,7 @@ SPI_MODE = 0b11
 #Scaling parameters
 gyro_scale = 131.0          #scaling parameter for gyroscope readings
 accel_scale = 16384.0       #scaling parameter for accelerometer readings
-mag_scale = 4900.0/32768.0  #scaling parameter for magnetometer readings
+mag_scale = (4900.0/32768.0)  #scaling parameter for magnetometer readings
 
 #Calibration parameters
 mag_x_offset = -5
@@ -132,6 +132,9 @@ def spi_write_block(handle, start_reg, values):
 def icm_read_all():
     spi_select_bank(0)
     raw_data = spi_read_block(ICM_SPI, ACCEL_XOUT_H, 14)
+
+#    print("a_x:%d|%d, a_y:%d|%d, a_z:%d|%d " % (raw_data[0], raw_data[1], raw_data[2], raw_data[3], raw_data[4], raw_data[5]), end='')
+#    print("g_x:%d|%d, g_y:%d|%d, g_z:%d|%d" % (raw_data[6], raw_data[7], raw_data[8], raw_data[9], raw_data[10], raw_data[11]))
 
     accel_scaled_x = twos_comp((raw_data[0] << 8) + raw_data[1]) / accel_scale
     accel_scaled_y = twos_comp((raw_data[2] << 8) + raw_data[3]) / accel_scale
@@ -187,7 +190,7 @@ def i2c_master_read(slave_addr, slave_reg, length):
     spi_write_byte(ICM_SPI, I2C_SLV0_CTRL, 0x80 | length)
     time.sleep(0.01)
 
-def set_accel_DLPF(val):
+def set_accel_config(val):
     spi_select_bank(2)
     spi_write_byte(ICM_SPI, ACCEL_CONFIG, val)
 
@@ -257,7 +260,7 @@ mag_wia2 = spi_read_byte(ICM_SPI, EXT_SLV_SENS_DATA_00)
 print(f"mag_wia2: 0x{mag_wia2:02X}")
 time.sleep(0.1)
 #Set the DLPF filtering frequency (BW)
-set_accel_DLPF(A_DLPF_5 | A_DLPF_ENABLE)
+set_accel_config(A_DLPF_5 | A_DLPF_ENABLE)
 time.sleep(0.01)
 
 #set the correct accelerometer offsets
