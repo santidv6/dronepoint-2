@@ -139,10 +139,12 @@ def icm_read_all():
     accel_scaled_x = twos_comp((raw_data[0] << 8) + raw_data[1]) / accel_scale
     accel_scaled_y = twos_comp((raw_data[2] << 8) + raw_data[3]) / accel_scale
     accel_scaled_z = twos_comp((raw_data[4] << 8) + raw_data[5]) / accel_scale
+#    print("a_x:%d, a_y:%d a_z:%d" % (accel_scaled_x, accel_scaled_y, accel_scaled_z))
 
     gyro_scaled_x = twos_comp((raw_data[6] << 8) + raw_data[7]) / gyro_scale
     gyro_scaled_y = twos_comp((raw_data[8] << 8) + raw_data[9]) / gyro_scale
     gyro_scaled_z = twos_comp((raw_data[10] << 8) + raw_data[11]) / gyro_scale
+    print("g_x:%d, g_y:%d g_z:%d" % (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z))
 
     temp = twos_comp((raw_data[12] << 8) + raw_data[13]) / 321 + 21
 
@@ -219,26 +221,28 @@ def load_mag_offsets():
     return mag_offsets[0], mag_offsets[1], mag_offsets[2]
 
 def load_accel_offsets():
-    fichero = open('accel_calib.txt','r')
+    fichero = open('/home/pi/repositories/dronepoint-2/accel_calib.txt','r')
     accel_offsets = format_data(fichero)[0]
 
     fichero.close()
     return int(accel_offsets[0]), int(accel_offsets[1]), int(accel_offsets[2]), int(accel_offsets[3]), int(accel_offsets[4]), int(accel_offsets[5])
 
 def write_accel_offsets_to_IMU(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl):
-    write_block(ICM_SPI, XA_OFFSET_H, [a_offset_xh, a_offset_xl])
+    spi_select_bank(1)
+    spi_write_block(ICM_SPI, XA_OFFSET_H, [a_offset_xh, a_offset_xl])
     time.sleep(0.01)
-    write_block(ICM_SPI, YA_OFFSET_H, [a_offset_yh, a_offset_yl])
+    spi_write_block(ICM_SPI, YA_OFFSET_H, [a_offset_yh, a_offset_yl])
     time.sleep(0.01)
-    write_block(ICM_SPI, ZA_OFFSET_H, [a_offset_zh, a_offset_zl])
+    spi_write_block(ICM_SPI, ZA_OFFSET_H, [a_offset_zh, a_offset_zl])
     time.sleep(0.01)
 
 def write_gyro_offsets_to_IMU(g_offset_xh, g_offset_xl, g_offset_yh, g_offset_yl, g_offset_zh, g_offset_zl):
-    write_block(ICM_SPI, XG_OFFSET_H, [g_offset_xh, g_offset_xl])
+    spi_select_bank(2)
+    spi_write_block(ICM_SPI, XG_OFFS_USRH, [g_offset_xh, g_offset_xl])
     time.sleep(0.01)
-    write_block(ICM_SPI, YG_OFFSET_H, [g_offset_yh, g_offset_yl])
+    spi_write_block(ICM_SPI, YG_OFFS_USRH, [g_offset_yh, g_offset_yl])
     time.sleep(0.01)
-    write_block(ICM_SPI, ZG_OFFSET_H, [g_offset_zh, g_offset_zl])
+    spi_write_block(ICM_SPI, ZG_OFFS_USRH, [g_offset_zh, g_offset_zl])
     time.sleep(0.01)
 
 ################################################################################
@@ -264,10 +268,10 @@ set_accel_config(A_DLPF_5 | A_DLPF_ENABLE)
 time.sleep(0.01)
 
 #set the correct accelerometer offsets
-#a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl = load_accel_offsets()
-#write_accel_offsets_to_IMU(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl)
+a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl = load_accel_offsets()
+write_accel_offsets_to_IMU(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl)
 #print(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl)
-#time.sleep(10)
+#time.sleep(6)
 
 #set the correct gyroscope offsets
 #write_gyro_offsets_to_IMU(255,126,0,18,0,0)
@@ -279,7 +283,7 @@ prev_time = time.time()
 print(f"Ax:{accel_scaled_x}, Ay:{accel_scaled_y}, Az:{accel_scaled_z} \t Gx:{gyro_scaled_x}, Gy:{gyro_scaled_y}, Gz:{gyro_scaled_z}")
 
 try:
-    for i in range(1,500+1):
+    for i in range(1,1000+1):
         cur_time = time.time()
         Tm = (cur_time - prev_time) #Sample time variable measures time between loop code runs
         tm_array.append(Tm)
@@ -288,8 +292,8 @@ try:
         (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, temp_raw) = icm_read_all()
 
 finally:
-    for i in range(0,len(tm_array)):
-        print("%.3f ms" % (tm_array[i]*1000))
+#    for i in range(0,len(tm_array)):
+#        print("%.3f ms" % (tm_array[i]*1000))
 
     print("Tm_mean: %.3f ms" % (mean(tm_array)*1000))
     print("Temp_raw: %.6f" % (temp_raw))
