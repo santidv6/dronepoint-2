@@ -88,18 +88,31 @@ DOR                 = 0x02
 
 ## GENERAL VALUES ##
 SPI_CHANNEL = 0
-SPI_FREQ = 7000000
-SPI_MODE = 0b11
+SPI_FREQ    = 7000000
+SPI_MODE    = 0b11
+
+RLED    = 0     #Red led pin for calibration routine
+GLED    = 1     #Green led pin for calibration routine
+BUTTON  = 25    #Pushbutton pin to start calibration routine
 
 #Scaling parameters
 gyro_scale  = 131.0     #scaling parameter for gyroscope readings
 accel_scale = 16384.0   #scaling parameter for accelerometer readings
 mag_scale   = 0.15      #scaling parameter for magnetometer readings
 
-#Calibration parameters
+#Magnetometer default values for offsets
 mag_x_offset = -5
 mag_y_offset = 10
 mag_z_offset = -5
+calibrate = False    #default value for calibration mode
+minx = 0
+maxx = 0
+miny = 0
+maxy = 0
+minz = 0
+maxz = 0
+prev_deg = 0
+suma_deg = 0
 
 tm_array = []
 
@@ -109,6 +122,13 @@ if not pi.connected:
 
 #Open SPI channel 0, 1 MHz, mode 3 (CPOL=1, CPHA=1)
 ICM_SPI = pi.spi_open(SPI_CHANNEL, SPI_FREQ, SPI_MODE)
+
+pi.set_mode(BUTTON, pi.INPUT)
+pi.set_pull_up_down(BUTTON, pi.PUD_UP)
+pi.set_mode(RLED, pi.OUTPUT)
+pi.write(RLED, 0)
+pi.set_mode(GLED, pi.OUTPUT)
+pi.write(GLED, 0)
 
 def spi_select_bank(bank):
     pi.spi_write(ICM_SPI, [REG_BANK_SEL, bank << 4])
@@ -130,27 +150,6 @@ def spi_write_block(handle, start_reg, values):
     tx = [start_reg & 0x7F] + list(values)
     count, data = pi.spi_xfer(handle, tx)
     return count == len(tx)     # True if all bytes returned
-
-def icm_read_all():
-    spi_select_bank(0)
-    raw_data = spi_read_block(ICM_SPI, ACCEL_XOUT_H, 14)
-
-#    print("a_x:%d|%d, a_y:%d|%d, a_z:%d|%d " % (raw_data[0], raw_data[1], raw_data[2], raw_data[3], raw_data[4], raw_data[5]), end='')
-#    print("g_x:%d|%d, g_y:%d|%d, g_z:%d|%d" % (raw_data[6], raw_data[7], raw_data[8], raw_data[9], raw_data[10], raw_data[11]))
-
-    accel_scaled_x = twos_comp((raw_data[0] << 8) + raw_data[1]) / accel_scale
-    accel_scaled_y = twos_comp((raw_data[2] << 8) + raw_data[3]) / accel_scale
-    accel_scaled_z = twos_comp((raw_data[4] << 8) + raw_data[5]) / accel_scale
-#    print("a_x:%d, a_y:%d a_z:%d" % (accel_scaled_x, accel_scaled_y, accel_scaled_z))
-
-    gyro_scaled_x = twos_comp((raw_data[6] << 8) + raw_data[7]) / gyro_scale
-    gyro_scaled_y = twos_comp((raw_data[8] << 8) + raw_data[9]) / gyro_scale
-    gyro_scaled_z = twos_comp((raw_data[10] << 8) + raw_data[11]) / gyro_scale
-    print("g_x:%d, g_y:%d g_z:%d" % (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z))
-
-    temp = twos_comp((raw_data[12] << 8) + raw_data[13]) / 321 + 21
-
-    return (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, temp)
 
 def twos_comp(val):
     if (val >= 0x8000):
@@ -193,14 +192,14 @@ def i2c_master_read(slave_addr, slave_reg, length):
     spi_write_byte(ICM_SPI, I2C_SLV0_REG, slave_reg)
     spi_write_byte(ICM_SPI, I2C_SLV0_CTRL, 0x80 | length)
     time.sleep(0.01)
-
+    
 def i2c_master_write(slave_addr, slave_reg, value):
     spi_select_bank(3)
     spi_write_byte(ICM_SPI, I2C_SLV0_ADDR, slave_addr & 0x7F)
     spi_write_byte(ICM_SPI, I2C_SLV0_REG, slave_reg)
     spi_write_byte(ICM_SPI, I2C_SLV0_DO, value)
     time.sleep(0.01)
-
+    
 def set_accel_config(val):
     spi_select_bank(2)
     spi_write_byte(ICM_SPI, ACCEL_CONFIG, val)
@@ -229,82 +228,112 @@ def load_mag_offsets():
     fichero.close()
     return mag_offsets[0], mag_offsets[1], mag_offsets[2]
 
-def load_accel_offsets():
-    fichero = open('/home/pi/repositories/dronepoint-2/accel_calib.txt','r')
-    accel_offsets = format_data(fichero)[0]
-
-    fichero.close()
-    return int(accel_offsets[0]), int(accel_offsets[1]), int(accel_offsets[2]), int(accel_offsets[3]), int(accel_offsets[4]), int(accel_offsets[5])
-
-def write_accel_offsets_to_IMU(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl):
-    spi_select_bank(1)
-    spi_write_block(ICM_SPI, XA_OFFSET_H, [a_offset_xh, a_offset_xl])
-    time.sleep(0.01)
-    spi_write_block(ICM_SPI, YA_OFFSET_H, [a_offset_yh, a_offset_yl])
-    time.sleep(0.01)
-    spi_write_block(ICM_SPI, ZA_OFFSET_H, [a_offset_zh, a_offset_zl])
-    time.sleep(0.01)
-
-def write_gyro_offsets_to_IMU(g_offset_xh, g_offset_xl, g_offset_yh, g_offset_yl, g_offset_zh, g_offset_zl):
-    spi_select_bank(2)
-    spi_write_block(ICM_SPI, XG_OFFS_USRH, [g_offset_xh, g_offset_xl])
-    time.sleep(0.01)
-    spi_write_block(ICM_SPI, YG_OFFS_USRH, [g_offset_yh, g_offset_yl])
-    time.sleep(0.01)
-    spi_write_block(ICM_SPI, ZG_OFFS_USRH, [g_offset_zh, g_offset_zl])
-    time.sleep(0.01)
-
-################################################################################
-################################################################################
 #Reset and wake up the ICM20948
 reset_icm()
 set_normal_mode()
-#Read WHO_AM_I register and print the value
-spi_select_bank(0)
-who_am_i = spi_read_byte(ICM_SPI, 0x00)
-print(f"WHO_AM_I = 0x{who_am_i:02X}")
-#Enable the i2c master internal interface
 enable_i2c_master_ctl()
-#Read AK09916's WHO_AM_I(WIA2) register (i2c+spi) and print the value
-i2c_master_read(MAG_ADD, MAG_WIA2, 1)
 
-spi_select_bank(0)
-mag_wia2 = spi_read_byte(ICM_SPI, EXT_SLV_SENS_DATA_00)
-print(f"mag_wia2: 0x{mag_wia2:02X}")
-time.sleep(0.1)
-#Set the DLPF filtering frequency (BW)
-set_accel_config(A_DLPF_5 | A_DLPF_ENABLE)
-time.sleep(0.01)
+#Power down for 1 ms
+i2c_master_write(MAG_ADD, MAG_CNTL2, PWDOWN_MODE)
+time.sleep(0.001)
 
-#set the correct accelerometer offsets
-a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl = load_accel_offsets()
-write_accel_offsets_to_IMU(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl)
-#print(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl)
-#time.sleep(6)
-
-#set the correct gyroscope offsets
-#write_gyro_offsets_to_IMU(255,126,0,18,0,0)
-
-prev_time = time.time()
-
-#Read accelerometer and gyroscope raw values and get the scaled values
-(gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, temp_raw) = icm_read_all()
-print(f"Ax:{accel_scaled_x}, Ay:{accel_scaled_y}, Az:{accel_scaled_z} \t Gx:{gyro_scaled_x}, Gy:{gyro_scaled_y}, Gz:{gyro_scaled_z}")
+i2c_master_write(MAG_ADD, MAG_CNTL2, CONT_100HZ_MODE)
+time.sleep(0.001)
 
 try:
-    for i in range(1,1000+1):
-        cur_time = time.time()
-        Tm = (cur_time - prev_time) #Sample time variable measures time between loop code runs
-        tm_array.append(Tm)
-        prev_time = cur_time        #This variable keeps current time as previous one for the next Tm assignment
-        #read accelerometer and gyroscope raw values and get the scaled values
-        (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, temp_raw) = icm_read_all()
+    if(GPIO.input(BUTTON) == False):    #if the pushbutton is pressed from the beginning go into the manual calibration mode
+        pi.write(RLED, 1)    #and turn on the red led
+        fichero = open('mag_calib.txt','w')    #open the calibration text file
+		#Now there is an algorithm to detect a total turn of the drone (sensor) on the axes we will calibrate (X and Y)
+        while (suma_deg < 360):
+            print(suma_deg)
+            raw_mag = read_block(MAG_ADD, MAG_OUT, 7)
+            if((raw_mag[6] & 0x08) != 0x08):
+                raw_mag_x = twos_comp((raw_mag[1] << 8) + raw_mag[0])
+                raw_mag_y = twos_comp((raw_mag[3] << 8) + raw_mag[2])
 
-finally:
-#    for i in range(0,len(tm_array)):
-#        print("%.3f ms" % (tm_array[i]*1000))
+                if raw_mag_x < minx:
+                    minx = raw_mag_x
+                if raw_mag_y < miny:
+                    miny = raw_mag_y
+                if raw_mag_x > maxx:
+                    maxx = raw_mag_x
+                if raw_mag_y > maxy:
+                    maxy = raw_mag_y
 
-    print("Tm_mean: %.3f ms" % (mean(tm_array)*1000))
-    print("Temp_raw: %.6f" % (temp_raw))
-    pi.spi_close(ICM_SPI)
-    pi.stop()
+            inc_deg = north_to_deg(round(raw_mag_x * mag_x_cf * mag_scale, 3),round(raw_mag_y * mag_y_cf * mag_scale, 3)) - prev_deg
+            if(inc_deg < 0 and abs(inc_deg) > 180):
+                inc_deg += 360
+            if(prev_deg and inc_deg < 180):
+                suma_deg += inc_deg
+
+            prev_deg = north_to_deg(round(raw_mag_x * mag_x_cf * mag_scale, 3),round(raw_mag_y * mag_y_cf * mag_scale, 3))
+            print("Suma:", suma_deg, "Deg:", prev_deg, "North_x:", raw_mag_x*mag_x_cf*mag_scale)
+            time.sleep(0.05)
+
+        mag_x_offset = (maxx + minx) / 2
+        mag_y_offset = (maxy + miny) / 2
+
+        pi.write(RLED, 0)
+        pi.write(GLED, 1)
+
+		#Again the TTDA (Total Turn Detection Algorithm) for XZ plane (Z axis calibration)
+        prev_deg = 0
+        suma_deg = 0
+        while (suma_deg< 360):
+            raw_mag = read_block(MAG_ADD, MAG_OUT, 7)
+            if((raw_mag[6] & 0x08) != 0x08):
+                raw_mag_x = twos_comp((raw_mag[1] << 8) + raw_mag[0])
+                raw_mag_z = twos_comp((raw_mag[5] << 8) + raw_mag[4])
+
+                if raw_mag_z < minz:
+                    minz = raw_mag_z
+                if raw_mag_z > maxz:
+                    maxz = raw_mag_z
+
+            inc_deg = north_to_deg(round(raw_mag_x * mag_x_cf * mag_scale, 3),round(raw_mag_z * mag_z_cf * mag_scale, 3)) - prev_deg
+            if(inc_deg < 0 and abs(inc_deg) > 180):
+                inc_deg += 360
+            if(prev_deg and inc_deg < 180):
+                suma_deg += inc_deg
+
+            prev_deg = north_to_deg(round(raw_mag_x * mag_x_cf * mag_scale, 3),round(raw_mag_z * mag_z_cf * mag_scale, 3))
+            print("Suma:", suma_deg, "Deg:", prev_deg, "North_x:", raw_mag_x * mag_x_cf * mag_scale)
+            time.sleep(0.05)
+
+        mag_z_offset = (maxz + minz) / 2
+        pi.write(GLED, 0)
+        print("mag_x_offset:",mag_x_offset,"mag_y_offset:",mag_y_offset,"mag_z_offset:",mag_z_offset)
+
+        #Save offset values on the calibration text file
+        print(mag_x_offset, mag_y_offset, mag_z_offset, file = fichero)
+        fichero.close()
+
+    else:
+        #if the pushbutton is not pressed, the offset values are read from the calibration text file
+        load_mag_offsets()
+
+    while True:
+        i2c_master_read(MAG_ADD, MAG_HXL, 7)
+        raw_mag = spi_read_block(ICM_SPI, EXT_SLV_SENS_DATA_00, 7)
+        if((raw_mag[6] & 0x08) != 0x08):    #if there is a read value make the conversions
+            raw_mag_x = twos_comp((raw_mag[1] << 8) + raw_mag[0])
+            raw_mag_y = twos_comp((raw_mag[3] << 8) + raw_mag[2])
+            raw_mag_z = twos_comp((raw_mag[5] << 8) + raw_mag[4])
+
+            mag_x = round((raw_mag_x - mag_x_offset) * 1 * mag_scale,3)
+            mag_y = round((raw_mag_y - mag_y_offset) * 1 * mag_scale,3)
+            mag_z = round((raw_mag_z - mag_z_offset) * 1 * mag_scale,3)
+
+            north_deg = north_to_deg(mag_x, mag_y)
+            #make a compensation of the values, necessary due to the tilt of the sensor
+            (mag_x_comp, mag_y_comp) = tilt_compensation(mag_x, mag_y, mag_z, 0, 0)
+            north_deg_comp = north_to_deg(mag_x_comp, mag_y_comp)
+
+            print('MAG_XYZ:(', mag_x, ',', mag_y, ',', mag_z, ')','CMAG_XYZ:',mag_x_comp,mag_y_comp ,',\tORIENTATION:', north_deg, 'Orientation_comp:',north_deg_comp)
+#            print("{0:.4f} {1:.4f}".format(raw_mag_x, raw_mag_y))
+            time.sleep(0.005)
+
+except KeyboardInterrupt:
+    fichero.close()
+    GPIO.cleanup()
