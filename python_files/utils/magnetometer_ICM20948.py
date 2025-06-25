@@ -10,7 +10,6 @@ from statistics import mean
 ICM20948_ADD        = 0x68
 # AK09916 I2C ADDRESS
 MAG_ADD             = 0x0C
-
 ## ICM20948 REGS ADDRESSES ##
 # USER BANK 0
 WHO_AM_I            = 0x00
@@ -49,6 +48,11 @@ I2C_SLV0_ADDR       = 0x03
 I2C_SLV0_REG        = 0x04
 I2C_SLV0_CTRL       = 0x05
 I2C_SLV0_DO         = 0x06
+I2C_SLV4_ADDR       = 0x13
+I2C_SLV4_REG        = 0x14
+I2C_SLV4_CTRL       = 0x15
+I2C_SLV4_DO         = 0x16
+I2C_SLV4_DI         = 0x17
 
 ## ICM REGISTERS VALUES ##
 A_DLPF_1 = (0x01 << 3)    # 218.1 Hz   ACCELEROMETER
@@ -91,26 +95,26 @@ SPI_CHANNEL = 0
 SPI_FREQ    = 7000000
 SPI_MODE    = 0b11
 
-RLED    = 0     #Red led pin for calibration routine
-GLED    = 1     #Green led pin for calibration routine
+RLED    = 23     #Red led pin for calibration routine
+GLED    = 24     #Green led pin for calibration routine
 BUTTON  = 25    #Pushbutton pin to start calibration routine
 
 #Scaling parameters
-gyro_scale  = 131.0     #scaling parameter for gyroscope readings
-accel_scale = 16384.0   #scaling parameter for accelerometer readings
-mag_scale   = 0.15      #scaling parameter for magnetometer readings
+gyro_scale  = 131.0     #scaling parameter for gyroscope readings (divided by)
+accel_scale = 16384.0   #scaling parameter for accelerometer readings (divided by)
+mag_scale   = 0.15      #scaling parameter for magnetometer readings (multiplied)
 
 #Magnetometer default values for offsets
-mag_x_offset = -5
-mag_y_offset = 10
-mag_z_offset = -5
+mag_x_offset = 0
+mag_y_offset = 20
+mag_z_offset = 35
 calibrate = False    #default value for calibration mode
-minx = 0
-maxx = 0
-miny = 0
-maxy = 0
-minz = 0
-maxz = 0
+minx = 500
+maxx = -500
+miny = 500
+maxy = -500
+minz = 500
+maxz = -500
 prev_deg = 0
 suma_deg = 0
 
@@ -123,11 +127,11 @@ if not pi.connected:
 #Open SPI channel 0, 1 MHz, mode 3 (CPOL=1, CPHA=1)
 ICM_SPI = pi.spi_open(SPI_CHANNEL, SPI_FREQ, SPI_MODE)
 
-pi.set_mode(BUTTON, pi.INPUT)
-pi.set_pull_up_down(BUTTON, pi.PUD_UP)
-pi.set_mode(RLED, pi.OUTPUT)
+pi.set_mode(BUTTON, pigpio.INPUT)
+pi.set_pull_up_down(BUTTON, pigpio.PUD_UP)
+pi.set_mode(RLED, pigpio.OUTPUT)
 pi.write(RLED, 0)
-pi.set_mode(GLED, pi.OUTPUT)
+pi.set_mode(GLED, pigpio.OUTPUT)
 pi.write(GLED, 0)
 
 def spi_select_bank(bank):
@@ -182,7 +186,7 @@ def enable_i2c_master_ctl():
     spi_select_bank(0)
     spi_write_byte(ICM_SPI, USER_CTRL, 0x20)
     spi_write_byte(ICM_SPI, INT_PIN_CFG, 0x00)
-    time.sleep(0.01)
+    time.sleep(0.010)
     spi_select_bank(3)
     spi_write_byte(ICM_SPI, I2C_MST_CTRL, 0x07)
 
@@ -191,15 +195,17 @@ def i2c_master_read(slave_addr, slave_reg, length):
     spi_write_byte(ICM_SPI, I2C_SLV0_ADDR, slave_addr | 0x80)
     spi_write_byte(ICM_SPI, I2C_SLV0_REG, slave_reg)
     spi_write_byte(ICM_SPI, I2C_SLV0_CTRL, 0x80 | length)
-    time.sleep(0.01)
-    
+    time.sleep(0.010)
+
 def i2c_master_write(slave_addr, slave_reg, value):
     spi_select_bank(3)
-    spi_write_byte(ICM_SPI, I2C_SLV0_ADDR, slave_addr & 0x7F)
-    spi_write_byte(ICM_SPI, I2C_SLV0_REG, slave_reg)
-    spi_write_byte(ICM_SPI, I2C_SLV0_DO, value)
-    time.sleep(0.01)
-    
+    spi_write_byte(ICM_SPI, I2C_SLV4_ADDR, slave_addr & 0x7F)
+    spi_write_byte(ICM_SPI, I2C_SLV4_REG, slave_reg)
+    spi_write_byte(ICM_SPI, I2C_SLV4_DO, value)
+    spi_write_byte(ICM_SPI, I2C_SLV4_CTRL, 0x80)
+#    print("DO: ", spi_read_byte(ICM_SPI, I2C_SLV4_DO), "CTRL: ", spi_read_byte(ICM_SPI, I2C_SLV4_CTRL))
+    time.sleep(0.010)
+
 def set_accel_config(val):
     spi_select_bank(2)
     spi_write_byte(ICM_SPI, ACCEL_CONFIG, val)
@@ -233,22 +239,24 @@ reset_icm()
 set_normal_mode()
 enable_i2c_master_ctl()
 
-#Power down for 1 ms
-i2c_master_write(MAG_ADD, MAG_CNTL2, PWDOWN_MODE)
+#Reset and wait for 1 ms
+i2c_master_write(MAG_ADD, MAG_CNTL3, 0x01)
 time.sleep(0.001)
 
 i2c_master_write(MAG_ADD, MAG_CNTL2, CONT_100HZ_MODE)
-time.sleep(0.001)
+time.sleep(0.010)
 
 try:
-    if(GPIO.input(BUTTON) == False):    #if the pushbutton is pressed from the beginning go into the manual calibration mode
+    if(pi.read(BUTTON) == False):    #if the pushbutton is pressed from the beginning go into the manual calibration mode
         pi.write(RLED, 1)    #and turn on the red led
-        fichero = open('mag_calib.txt','w')    #open the calibration text file
+        fichero = open('/home/pi/repositories/dronepoint-2/mag_calib.txt','w')    #open the calibration text file
 		#Now there is an algorithm to detect a total turn of the drone (sensor) on the axes we will calibrate (X and Y)
         while (suma_deg < 360):
             print(suma_deg)
-            raw_mag = read_block(MAG_ADD, MAG_OUT, 7)
-            if((raw_mag[6] & 0x08) != 0x08):
+            i2c_master_read(MAG_ADD, MAG_HXL, 8)
+            spi_select_bank(0)
+            raw_mag = spi_read_block(ICM_SPI, EXT_SLV_SENS_DATA_00, 8)
+            if((raw_mag[7] & 0x08) != 0x08):
                 raw_mag_x = twos_comp((raw_mag[1] << 8) + raw_mag[0])
                 raw_mag_y = twos_comp((raw_mag[3] << 8) + raw_mag[2])
 
@@ -261,14 +269,14 @@ try:
                 if raw_mag_y > maxy:
                     maxy = raw_mag_y
 
-            inc_deg = north_to_deg(round(raw_mag_x * mag_x_cf * mag_scale, 3),round(raw_mag_y * mag_y_cf * mag_scale, 3)) - prev_deg
+            inc_deg = north_to_deg(round(raw_mag_x * mag_scale, 3),round(raw_mag_y * mag_scale, 3)) - prev_deg
             if(inc_deg < 0 and abs(inc_deg) > 180):
                 inc_deg += 360
             if(prev_deg and inc_deg < 180):
                 suma_deg += inc_deg
 
-            prev_deg = north_to_deg(round(raw_mag_x * mag_x_cf * mag_scale, 3),round(raw_mag_y * mag_y_cf * mag_scale, 3))
-            print("Suma:", suma_deg, "Deg:", prev_deg, "North_x:", raw_mag_x*mag_x_cf*mag_scale)
+            prev_deg = north_to_deg(round(raw_mag_x * mag_scale, 3),round(raw_mag_y * mag_scale, 3))
+            print("XY-PLANE","Suma:", suma_deg, "Deg:", prev_deg, "uT_x:", raw_mag_x * mag_scale)
             time.sleep(0.05)
 
         mag_x_offset = (maxx + minx) / 2
@@ -281,8 +289,10 @@ try:
         prev_deg = 0
         suma_deg = 0
         while (suma_deg< 360):
-            raw_mag = read_block(MAG_ADD, MAG_OUT, 7)
-            if((raw_mag[6] & 0x08) != 0x08):
+            i2c_master_read(MAG_ADD, MAG_HXL, 8)
+            spi_select_bank(0)
+            raw_mag = spi_read_block(ICM_SPI, EXT_SLV_SENS_DATA_00, 8)
+            if((raw_mag[7] & 0x08) != 0x08):
                 raw_mag_x = twos_comp((raw_mag[1] << 8) + raw_mag[0])
                 raw_mag_z = twos_comp((raw_mag[5] << 8) + raw_mag[4])
 
@@ -291,14 +301,14 @@ try:
                 if raw_mag_z > maxz:
                     maxz = raw_mag_z
 
-            inc_deg = north_to_deg(round(raw_mag_x * mag_x_cf * mag_scale, 3),round(raw_mag_z * mag_z_cf * mag_scale, 3)) - prev_deg
+            inc_deg = north_to_deg(round(raw_mag_x * mag_scale, 3),round(raw_mag_z * mag_scale, 3)) - prev_deg
             if(inc_deg < 0 and abs(inc_deg) > 180):
                 inc_deg += 360
             if(prev_deg and inc_deg < 180):
                 suma_deg += inc_deg
 
-            prev_deg = north_to_deg(round(raw_mag_x * mag_x_cf * mag_scale, 3),round(raw_mag_z * mag_z_cf * mag_scale, 3))
-            print("Suma:", suma_deg, "Deg:", prev_deg, "North_x:", raw_mag_x * mag_x_cf * mag_scale)
+            prev_deg = north_to_deg(round(raw_mag_x * mag_scale, 3),round(raw_mag_z * mag_scale, 3))
+            print("XZ-PLANE","Suma:", suma_deg, "Deg:", prev_deg, "uT_x:", raw_mag_x * mag_scale)
             time.sleep(0.05)
 
         mag_z_offset = (maxz + minz) / 2
@@ -314,26 +324,47 @@ try:
         load_mag_offsets()
 
     while True:
-        i2c_master_read(MAG_ADD, MAG_HXL, 7)
-        raw_mag = spi_read_block(ICM_SPI, EXT_SLV_SENS_DATA_00, 7)
-        if((raw_mag[6] & 0x08) != 0x08):    #if there is a read value make the conversions
+        i2c_master_read(MAG_ADD, MAG_HXL, 8)
+        spi_select_bank(0)
+        raw_mag = spi_read_block(ICM_SPI, EXT_SLV_SENS_DATA_00, 8)
+        if((raw_mag[7] & 0x08) != 0x08):    #if there is a read value make the conversions
             raw_mag_x = twos_comp((raw_mag[1] << 8) + raw_mag[0])
             raw_mag_y = twos_comp((raw_mag[3] << 8) + raw_mag[2])
             raw_mag_z = twos_comp((raw_mag[5] << 8) + raw_mag[4])
 
-            mag_x = round((raw_mag_x - mag_x_offset) * 1 * mag_scale,3)
-            mag_y = round((raw_mag_y - mag_y_offset) * 1 * mag_scale,3)
-            mag_z = round((raw_mag_z - mag_z_offset) * 1 * mag_scale,3)
+            if raw_mag_x < minx:
+                minx = raw_mag_x
+            if raw_mag_y < miny:
+                miny = raw_mag_y
+            if raw_mag_x > maxx:
+                maxx = raw_mag_x
+            if raw_mag_y > maxy:
+                maxy = raw_mag_y
+            if raw_mag_z < minz:
+                minz = raw_mag_z
+            if raw_mag_z > maxz:
+                maxz = raw_mag_z
+
+            mag_x = round((raw_mag_x * mag_scale - mag_x_offset),3)
+            mag_y = round((raw_mag_y * mag_scale - mag_y_offset),3)
+            mag_z = round((raw_mag_z * mag_scale - mag_z_offset),3)
 
             north_deg = north_to_deg(mag_x, mag_y)
             #make a compensation of the values, necessary due to the tilt of the sensor
             (mag_x_comp, mag_y_comp) = tilt_compensation(mag_x, mag_y, mag_z, 0, 0)
             north_deg_comp = north_to_deg(mag_x_comp, mag_y_comp)
 
-            print('MAG_XYZ:(', mag_x, ',', mag_y, ',', mag_z, ')','CMAG_XYZ:',mag_x_comp,mag_y_comp ,',\tORIENTATION:', north_deg, 'Orientation_comp:',north_deg_comp)
-#            print("{0:.4f} {1:.4f}".format(raw_mag_x, raw_mag_y))
+            print(f"MAG_XYZ:({mag_x:8.3f},{mag_y:8.3f}, {mag_z:8.3f} \t CMAG_XYZ: {mag_x_comp:8.3f}, {mag_y_comp:8.3f} \t ORIENTATION: {north_deg:.3f} \t Orientation_comp: {north_deg_comp:.3f}")
+#            print("{0:.4f} {1:.4f}".format(mag_x, mag_y))
             time.sleep(0.005)
 
 except KeyboardInterrupt:
-    fichero.close()
-    GPIO.cleanup()
+    print("minx: {0}, maxx: {1}; miny: {2}, maxy: {3}; minz: {4}, maxz: {5};".format(minx,maxx,miny,maxy,minz,maxz))
+    scalex = (maxx-minx)/2
+    scaley = (maxy-miny)/2
+    scalez = (maxz-minz)/2
+    scale_average = (scalex+scaley+scalez)/3.0
+    scalex = scale_average/scalex
+    scaley = scale_average/scaley
+    scalez = scale_average/scalez
+    print(f"scalex(uT):{scalex}; scaley(uT):{scaley}; scalez(uT):{scalez};")
