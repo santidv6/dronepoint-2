@@ -190,14 +190,14 @@ def tilt_compensation(mag_x, mag_y, mag_z, rad_pitch, rad_roll):
     return comp_x, comp_y
 
 def load_mag_offsets():
-    fichero = open('mag_calib.txt','r')
+    fichero = open('/home/pi/repositories/dronepoint-2/config/mag_calib.txt','r')
     mag_offsets = format_data(fichero)[0]
 
     fichero.close()
     return mag_offsets[0], mag_offsets[1], mag_offsets[2]
 
 def load_accel_offsets():
-    fichero = open('accel_calib.txt','r')
+    fichero = open('/home/pi/repositories/dronepoint-2/config/accel_calib.txt','r')
     accel_offsets = format_data(fichero)[0]
 
     fichero.close()

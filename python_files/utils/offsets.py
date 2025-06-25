@@ -91,7 +91,7 @@ def format_data(data):
     return matrix
 
 def load_accel_offsets():
-    fichero = open('/home/pi/repositories/dronepoint-2/accel_calib.txt','r')
+    fichero = open('/home/pi/repositories/dronepoint-2/config/accel_calib.txt','r')
     accel_offsets = format_data(fichero)[0]
 
     fichero.close()
