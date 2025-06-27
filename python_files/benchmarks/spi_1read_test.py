@@ -6,6 +6,10 @@ import math
 import time
 from statistics import mean
 
+pi = pigpio.pi()
+if not pi.connected:
+    raise RuntimeError("Not successfully connected to pigpiod!")
+
 # ICM20948 I2C ADDRESS
 ICM20948_ADD        = 0x68
 # AK09916 I2C ADDRESS
@@ -49,6 +53,11 @@ I2C_SLV0_ADDR       = 0x03
 I2C_SLV0_REG        = 0x04
 I2C_SLV0_CTRL       = 0x05
 I2C_SLV0_DO         = 0x06
+I2C_SLV4_ADDR       = 0x13
+I2C_SLV4_REG        = 0x14
+I2C_SLV4_CTRL       = 0x15
+I2C_SLV4_DO         = 0x16
+I2C_SLV4_DI         = 0x17                          
 
 ## ICM REGISTERS VALUES ##
 A_DLPF_1 = (0x01 << 3)    # 218.1 Hz   ACCELEROMETER
@@ -88,8 +97,8 @@ DOR                 = 0x02
 
 ## GENERAL VALUES ##
 SPI_CHANNEL = 0
-SPI_FREQ = 7000000
-SPI_MODE = 0b11
+SPI_FREQ    = 7000000
+SPI_MODE    = 0b11
 
 #Scaling parameters
 gyro_scale  = 131.0     #scaling parameter for gyroscope readings
@@ -102,10 +111,6 @@ mag_y_offset = 20
 mag_z_offset = 35
 
 tm_array = []
-
-pi = pigpio.pi()
-if not pi.connected:
-    raise RuntimeError("Not successfully connected to pigpiod!")
 
 #Open SPI channel 0, 1 MHz, mode 3 (CPOL=1, CPHA=1)
 ICM_SPI = pi.spi_open(SPI_CHANNEL, SPI_FREQ, SPI_MODE)
@@ -130,44 +135,6 @@ def spi_write_block(handle, start_reg, values):
     tx = [start_reg & 0x7F] + list(values)
     count, data = pi.spi_xfer(handle, tx)
     return count == len(tx)     # True if all bytes returned
-
-def icm_read_all():
-    spi_select_bank(0)
-    raw_data = spi_read_block(ICM_SPI, ACCEL_XOUT_H, 14)
-
-#    print("a_x:%d|%d, a_y:%d|%d, a_z:%d|%d " % (raw_data[0], raw_data[1], raw_data[2], raw_data[3], raw_data[4], raw_data[5]), end='')
-#    print("g_x:%d|%d, g_y:%d|%d, g_z:%d|%d" % (raw_data[6], raw_data[7], raw_data[8], raw_data[9], raw_data[10], raw_data[11]))
-
-    accel_scaled_x = twos_comp((raw_data[0] << 8) + raw_data[1]) / accel_scale
-    accel_scaled_y = twos_comp((raw_data[2] << 8) + raw_data[3]) / accel_scale
-    accel_scaled_z = twos_comp((raw_data[4] << 8) + raw_data[5]) / accel_scale
-#    print("a_x:%d, a_y:%d a_z:%d" % (accel_scaled_x, accel_scaled_y, accel_scaled_z))
-
-    gyro_scaled_x = twos_comp((raw_data[6] << 8) + raw_data[7]) / gyro_scale
-    gyro_scaled_y = twos_comp((raw_data[8] << 8) + raw_data[9]) / gyro_scale
-    gyro_scaled_z = twos_comp((raw_data[10] << 8) + raw_data[11]) / gyro_scale
-    print("g_x:%d, g_y:%d g_z:%d" % (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z))
-
-    temp = twos_comp((raw_data[12] << 8) + raw_data[13]) / 321 + 21
-
-    return (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, temp)
-
-def twos_comp(val):
-    if (val >= 0x8000):
-        return -((65535 - val) + 1)
-    else:
-        return val
-
-def dist(a, b):
-    return math.sqrt((a * a) + (b * b))
-
-def get_y_rotation(x, y, z):
-    radians = math.atan2(x, dist(y, z))
-    return -math.degrees(radians)
-
-def get_x_rotation(x, y, z):
-    radians = math.atan2(y, dist(x, z))
-    return math.degrees(radians)
 
 def reset_icm():
     spi_select_bank(0)
@@ -204,6 +171,44 @@ def i2c_master_write(slave_addr, slave_reg, value):
 def set_accel_config(val):
     spi_select_bank(2)
     spi_write_byte(ICM_SPI, ACCEL_CONFIG, val)
+
+def icm_read_all():
+    spi_select_bank(0)
+    raw_data = spi_read_block(ICM_SPI, ACCEL_XOUT_H, 14)
+
+#    print("a_x:%d|%d, a_y:%d|%d, a_z:%d|%d " % (raw_data[0], raw_data[1], raw_data[2], raw_data[3], raw_data[4], raw_data[5]), end='')
+#    print("g_x:%d|%d, g_y:%d|%d, g_z:%d|%d" % (raw_data[6], raw_data[7], raw_data[8], raw_data[9], raw_data[10], raw_data[11]))
+
+    accel_scaled_x = twos_comp((raw_data[0] << 8) + raw_data[1]) / accel_scale
+    accel_scaled_y = twos_comp((raw_data[2] << 8) + raw_data[3]) / accel_scale
+    accel_scaled_z = twos_comp((raw_data[4] << 8) + raw_data[5]) / accel_scale
+#    print("a_x:%d, a_y:%d a_z:%d" % (accel_scaled_x, accel_scaled_y, accel_scaled_z))
+
+    gyro_scaled_x = twos_comp((raw_data[6] << 8) + raw_data[7]) / gyro_scale
+    gyro_scaled_y = twos_comp((raw_data[8] << 8) + raw_data[9]) / gyro_scale
+    gyro_scaled_z = twos_comp((raw_data[10] << 8) + raw_data[11]) / gyro_scale
+#    print("g_x:%d, g_y:%d g_z:%d" % (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z))
+
+    temp = twos_comp((raw_data[12] << 8) + raw_data[13]) / 321 + 21
+
+    return (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, temp)
+
+def twos_comp(val):
+    if (val >= 0x8000):
+        return -((65535 - val) + 1)
+    else:
+        return val
+
+def dist(a, b):
+    return math.sqrt((a * a) + (b * b))
+
+def get_y_rotation(x, y, z):
+    radians = math.atan2(x, dist(y, z))
+    return -math.degrees(radians)
+
+def get_x_rotation(x, y, z):
+    radians = math.atan2(y, dist(x, z))
+    return math.degrees(radians)
 
 def north_to_deg(x, y):
     north_rad = math.atan2(y, x) + math.pi / 2
@@ -254,8 +259,8 @@ def write_gyro_offsets_to_IMU(g_offset_xh, g_offset_xl, g_offset_yh, g_offset_yl
     spi_write_block(ICM_SPI, ZG_OFFS_USRH, [g_offset_zh, g_offset_zl])
     time.sleep(0.01)
 
-################################################################################
-################################################################################
+###############################################################################
+###############################################################################
 #Reset and wake up the ICM20948
 reset_icm()
 set_normal_mode()
@@ -267,7 +272,6 @@ print(f"WHO_AM_I = 0x{who_am_i:02X}")
 enable_i2c_master_ctl()
 #Read AK09916's WHO_AM_I(WIA2) register (i2c+spi) and print the value
 i2c_master_read(MAG_ADD, MAG_WIA2, 1)
-
 spi_select_bank(0)
 mag_wia2 = spi_read_byte(ICM_SPI, EXT_SLV_SENS_DATA_00)
 print(f"mag_wia2: 0x{mag_wia2:02X}")
@@ -276,13 +280,13 @@ time.sleep(0.1)
 set_accel_config(A_DLPF_5 | A_DLPF_ENABLE)
 time.sleep(0.01)
 
-#set the correct accelerometer offsets
+#Set the correct accelerometer offsets
 a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl = load_accel_offsets()
 write_accel_offsets_to_IMU(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl)
 #print(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl)
 #time.sleep(6)
 
-#set the correct gyroscope offsets
+#Set the correct gyroscope offsets
 #write_gyro_offsets_to_IMU(255,126,0,18,0,0)
 
 prev_time = time.time()

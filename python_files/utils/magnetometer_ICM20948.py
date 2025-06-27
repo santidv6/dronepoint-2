@@ -6,6 +6,10 @@ import math
 import time
 from statistics import mean
 
+pi = pigpio.pi()
+if not pi.connected:
+    raise RuntimeError("Not successfully connected to pigpiod!")
+
 # ICM20948 I2C ADDRESS
 ICM20948_ADD        = 0x68
 # AK09916 I2C ADDRESS
@@ -120,10 +124,6 @@ suma_deg = 0
 
 tm_array = []
 
-pi = pigpio.pi()
-if not pi.connected:
-    raise RuntimeError("Not successfully connected to pigpiod!")
-
 #Open SPI channel 0, 1 MHz, mode 3 (CPOL=1, CPHA=1)
 ICM_SPI = pi.spi_open(SPI_CHANNEL, SPI_FREQ, SPI_MODE)
 
@@ -154,23 +154,6 @@ def spi_write_block(handle, start_reg, values):
     tx = [start_reg & 0x7F] + list(values)
     count, data = pi.spi_xfer(handle, tx)
     return count == len(tx)     # True if all bytes returned
-
-def twos_comp(val):
-    if (val >= 0x8000):
-        return -((65535 - val) + 1)
-    else:
-        return val
-
-def dist(a, b):
-    return math.sqrt((a * a) + (b * b))
-
-def get_y_rotation(x, y, z):
-    radians = math.atan2(x, dist(y, z))
-    return -math.degrees(radians)
-
-def get_x_rotation(x, y, z):
-    radians = math.atan2(y, dist(x, z))
-    return math.degrees(radians)
 
 def reset_icm():
     spi_select_bank(0)
@@ -210,6 +193,23 @@ def set_accel_config(val):
     spi_select_bank(2)
     spi_write_byte(ICM_SPI, ACCEL_CONFIG, val)
 
+def twos_comp(val):
+    if (val >= 0x8000):
+        return -((65535 - val) + 1)
+    else:
+        return val
+
+def dist(a, b):
+    return math.sqrt((a * a) + (b * b))
+
+def get_y_rotation(x, y, z):
+    radians = math.atan2(x, dist(y, z))
+    return -math.degrees(radians)
+
+def get_x_rotation(x, y, z):
+    radians = math.atan2(y, dist(x, z))
+    return math.degrees(radians)
+
 def north_to_deg(x, y):
     north_rad = math.atan2(y, x) + math.pi / 2
     if (north_rad < 0):
@@ -234,6 +234,8 @@ def load_mag_offsets():
     fichero.close()
     return mag_offsets[0], mag_offsets[1], mag_offsets[2]
 
+###############################################################################
+###############################################################################
 #Reset and wake up the ICM20948
 reset_icm()
 set_normal_mode()
@@ -242,7 +244,7 @@ enable_i2c_master_ctl()
 #Reset and wait for 1 ms
 i2c_master_write(MAG_ADD, MAG_CNTL3, 0x01)
 time.sleep(0.001)
-
+#Set the continous mode at 100 Hz rate
 i2c_master_write(MAG_ADD, MAG_CNTL2, CONT_100HZ_MODE)
 time.sleep(0.010)
 
