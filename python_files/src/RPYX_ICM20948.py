@@ -43,11 +43,13 @@ GYRO_CONFIG_1       = 0x01
 XG_OFFS_USRH        = 0x03
 YG_OFFS_USRH        = 0x05
 ZG_OFFS_USRH        = 0x07
+ODR_ALIGN_EN        = 0x09
 ACCEL_CONFIG        = 0x14
 TEMP_CONFIG         = 0x53
 # USER BANK 3
 I2C_MST_ODR_CONFIG  = 0x00
 I2C_MST_CTRL        = 0x01
+I2C_MST_DELAY_CTRL  = 0x02
 I2C_SLV0_ADDR       = 0x03
 I2C_SLV0_REG        = 0x04
 I2C_SLV0_CTRL       = 0x05
@@ -69,7 +71,7 @@ A_FS_SEL_2G         = 0x00
 A_FS_SEL_16G        = 0x06
 A_DLPF_ENABLE       = 0x01
 BYPASS_EN           = 0x02
-I2C_MST_CTRL        = 0x01
+I2C_MST_P_NSR_STOP  = (0x01 << 4)
 
 ## AK09916 REGS ADDRESSES ##
 MAG_WIA2            = 0x01
@@ -110,7 +112,7 @@ init_thrust = 10
 landing_thrust = 24
 thrust = 42             #Base propulsion level of the motors
 ref = [1.0, 1.0, 60]    #Reference angle values
-abs_horizontal_correction = [-1.0, 1.0]
+abs_horizontal_correction = [0.0, 0.0]
 CF_alpha = 0.98
 
 #Roll and Pitch control systems constants and parameters
@@ -138,9 +140,9 @@ accel_scale = 16384.0   #scaling parameter for accelerometer readings (divided b
 mag_scale   = 0.15      #scaling parameter for magnetometer readings (multiplied)
 
 #Magnetometer default values for offsets
-mag_x_offset = 0
-mag_y_offset = 20
-mag_z_offset = 35
+mag_x_offset = 1
+mag_y_offset = 21
+mag_z_offset = 36
 
 #Printing arrays
 tm_array = []
@@ -171,7 +173,6 @@ pi.set_PWM_dutycycle(RBMOT_PIN,0)
 pi.set_PWM_dutycycle(RFMOT_PIN,0)
 pi.set_PWM_dutycycle(LBMOT_PIN,0)
 #pi.hardware_PWM(RFMOT_PIN,PWM_FREQ,0) # doesn't seem to do any good in control loop time because the bottleneck seems to be in the communication with the daemon itself
-#pi.hardware_PWM(LBMOT_PIN,PWM_FREQ,0) # doesn't seem to do any good in control loop time because the bottleneck seems to be in the communication with the daemon itself
 
 #Open SPI channel 0, 1 MHz, mode 3 (CPOL=1, CPHA=1)
 ICM_SPI = pi.spi_open(SPI_CHANNEL, SPI_FREQ, SPI_MODE)
@@ -235,9 +236,10 @@ def set_accel_config(val):
     spi_select_bank(2)
     spi_write_byte(ICM_SPI, ACCEL_CONFIG, val)
 
-def icm_read_all():
-    spi_select_bank(0)
-    raw_data = spi_read_block(ICM_SPI, ACCEL_XOUT_H, 14)
+def icm_read_all(select = True):
+    if select == True:
+        spi_select_bank(0)
+    raw_data = spi_read_block(ICM_SPI, ACCEL_XOUT_H, 14+8)
 
 #    print("a_x:%d|%d, a_y:%d|%d, a_z:%d|%d " % (raw_data[0], raw_data[1], raw_data[2], raw_data[3], raw_data[4], raw_data[5]), end='')
 #    print("g_x:%d|%d, g_y:%d|%d, g_z:%d|%d" % (raw_data[6], raw_data[7], raw_data[8], raw_data[9], raw_data[10], raw_data[11]))
@@ -252,9 +254,17 @@ def icm_read_all():
     gyro_scaled_z = twos_comp((raw_data[10] << 8) + raw_data[11]) / gyro_scale
 #    print("g_x:%d, g_y:%d g_z:%d" % (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z))
 
-    temp = twos_comp((raw_data[12] << 8) + raw_data[13]) / 321 + 21
+#    temp = twos_comp((raw_data[12] << 8) + raw_data[13]) / 321 + 21
 
-    return (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, temp)
+    raw_mag_x = twos_comp((raw_data[15] << 8) + raw_data[14])
+    raw_mag_y = twos_comp((raw_data[17] << 8) + raw_data[16])
+    raw_mag_z = twos_comp((raw_data[19] << 8) + raw_data[18])
+
+    mag_x = round((raw_mag_x * mag_scale - mag_x_offset), 3)
+    mag_y = round((raw_mag_y * mag_scale - mag_y_offset), 3)
+    mag_z = round((raw_mag_z * mag_scale - mag_z_offset), 3)
+
+    return (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, mag_x, mag_y, mag_z) #, temp)
 
 def twos_comp(val):
     if (val >= 0x8000):
@@ -327,12 +337,18 @@ def write_gyro_offsets_to_IMU(g_offset_xh, g_offset_xl, g_offset_yh, g_offset_yl
 #Reset and wake up the ICM20948
 reset_icm()
 set_normal_mode()
+#spi_select_bank(2)
+#spi_write_byte(ICM_SPI, ODR_ALIGN_EN, 0x01)
+#time.sleep(0.010)
+#spi_select_bank(3)
+#spi_write_byte(ICM_SPI, I2C_MST_DELAY_CTRL, 0x01)
+#time.sleep(0.010)
 enable_i2c_master_ctl()
 #Set the DLPF filtering frequency (BW)
 set_accel_config(A_DLPF_5 | A_DLPF_ENABLE)
-time.sleep(0.01)
+time.sleep(0.010)
 
-#Set the correct accelerometer offsets
+#Load and set the correct accelerometer offsets
 a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl = load_accel_offsets()
 write_accel_offsets_to_IMU(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl)
 #print(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a_offset_zh, a_offset_zl)
@@ -342,10 +358,22 @@ write_accel_offsets_to_IMU(a_offset_xh, a_offset_xl, a_offset_yh, a_offset_yl, a
 #write_gyro_offsets_to_IMU(255,126,0,18,0,0)
 #write_gyro_offsets_to_IMU(0,0,0,0,0,0)
 
-prev_time = time.time()
+#Load the magnetometer offsets
+mag_x_offset, mag_y_offset, mag_z_offset = load_mag_offsets()
+#print("mag_x_offset:{} mag_y_offset:{} mag_z_offset:{}".format(mag_x_offset, mag_y_offset, mag_z_offset))
+
+#Reset and wait for 1 ms
+i2c_master_write(MAG_ADD, MAG_CNTL3, 0x01)
+time.sleep(0.001)
+#Set the continous mode at 100 Hz rate
+i2c_master_write(MAG_ADD, MAG_CNTL2, CONT_100HZ_MODE)
+time.sleep(0.010)
+
+#Configure the periodic read of MAG data registers and redirection to EXT_SLV0_SENS_DATA_XX registers
+i2c_master_read(MAG_ADD, MAG_HXL, 8)
 
 #Read accelerometer and gyroscope raw values and get the scaled values
-(gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z) = icm_read_all()
+(gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, mag_x, mag_y, mag_z) = icm_read_all()
 #print("accel_scaled_x:%.4f, accel_scaled_y:%.4f, accel_scaled_z:%.4f " % (accel_scaled_x, accel_scaled_y, accel_scaled_z),end='')
 #print("gyro_scaled_x:%.4f, gyro_scaled_y:%.4f, gyro_scaled_z:%.4f" % (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z))
 
@@ -361,50 +389,24 @@ gyro_offset_y = gyro_scaled_y
 gyro_total_x = CF_x
 gyro_total_y = CF_y
 
-#Reset and wait for 1 ms
-i2c_master_write(MAG_ADD, MAG_CNTL3, 0x01)
-time.sleep(0.001)
-#Set the continous mode at 100 Hz rate
-i2c_master_write(MAG_ADD, MAG_CNTL2, CONT_100HZ_MODE)
-time.sleep(0.010)
+prev_time = time.time()
 
 #print ("{0:.4f} {1:.2f} {2:.2f} {3:.2f} {4:.2f} {5:.2f} {6:.2f}".format( time.time() - initial, (CF_x), gyro_total_x, (CF_x), (CF_y), gyro_total_y, (CF_y)))
+
 try:
-    mag_x_offset, mag_y_offset, mag_z_offset = load_mag_offsets()
-    #print("mag_x_offset:{} mag_y_offset:{} mag_z_offset:{}".format(mag_x_offset, mag_y_offset, mag_z_offset))
-
-    i2c_master_read(MAG_ADD, MAG_HXL, 8)
+    #Select BANK 0 for now and for the whole control loop
     spi_select_bank(0)
-    raw_mag = spi_read_block(ICM_SPI, EXT_SLV_SENS_DATA_00, 8)
-    time.sleep(0.01)
-    if((raw_mag[7] & 0x08) != 0x08):    #if there is a read value make the conversions
-        raw_mag_x = twos_comp((raw_mag[1] << 8) + raw_mag[0])
-        raw_mag_y = twos_comp((raw_mag[3] << 8) + raw_mag[2])
-        raw_mag_z = twos_comp((raw_mag[5] << 8) + raw_mag[4])
-#        print("raw_x:%d, raw_y:%d, raw_z:%d" % (raw_mag_x, raw_mag_y,raw_mag_z))
-        mag_x = round((raw_mag_x * mag_scale - mag_x_offset), 3)
-        mag_y = round((raw_mag_y * mag_scale - mag_y_offset), 3)
-        mag_z = round((raw_mag_z * mag_scale - mag_z_offset), 3)
-#        print("mag_x:%lf, mag_y:%lf, mag_z:%lf" % (mag_x, mag_y,mag_z))
-        
-        #north_deg = north_to_deg(mag_x, mag_y)
-        #make a compensation of the values, necessary due to the tilt of the sensor
-        mag_x_comp, mag_y_comp = tilt_compensation(mag_x, mag_y, mag_z, math.radians(CF_y), math.radians(CF_x))
-#        print("comp_x:%lf, comp_y:%lf, CF_y:%lf, CF_x:%lf" % (mag_x_comp,mag_y_comp,CF_y,CF_x))
-        north_deg_comp = north_to_deg(mag_x_comp, mag_y_comp)
-
-    ref[2] = north_deg_comp
-#    print("ndegcomp:",north_deg_comp)
 
     CF_x_total = 0
     CF_y_total = 0
+    north_deg_comp_total = 0
 
     for i in range(1,500+1):
         cur_time = time.time()
         Tm = (cur_time - prev_time) #Sample time variable measures time between loop code runs
         prev_time = cur_time        #This variable keeps current time as previous one for the next Tm assignment
         #read accelerometer and gyroscope raw values and get the scaled values
-        (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z) = icm_read_all()
+        (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, mag_x, mag_y, mag_z) = icm_read_all(False)
         #substract the offset from the gyro scaled value
         gyro_scaled_x -= gyro_offset_x
         gyro_scaled_y -= gyro_offset_y
@@ -427,12 +429,22 @@ try:
         CF_y = 0.96 * (CF_y + gyro_y_delta) + (0.04 * rotation_y)
         CF_y_total += CF_y
 
+        #north_deg = north_to_deg(mag_x, mag_y)
+        #make a compensation of the values, necessary due to the tilt of the sensor
+        mag_x_comp, mag_y_comp = tilt_compensation(mag_x, mag_y, mag_z, math.radians(CF_y), math.radians(CF_x))
+#        print("comp_x:%lf, comp_y:%lf, CF_y:%lf, CF_x:%lf" % (mag_x_comp,mag_y_comp,CF_y,CF_x))
+        north_deg_comp = north_to_deg(mag_x_comp, mag_y_comp)
+        north_deg_comp_total += north_deg_comp
+
     CF_x_average = CF_x_total/500.0
     CF_y_average = CF_y_total/500.0
-#    print("CFX_av.{:+07.4f}, CFY_av:{:+07.4f}  ".format(CF_x_average, CF_y_average))
+    north_deg_comp_average = north_deg_comp_total/500.0
+#    print("CFX_av.{:+07.4f}, CFY_av:{:+07.4f}, NorthDeg_av:{+06.3f} ".format(CF_x_average, CF_y_average, north_deg_comp_average))
 
     ref[0] = CF_x_average + abs_horizontal_correction[0]
     ref[1] = CF_y_average + abs_horizontal_correction[1]
+    ref[2] = north_deg_comp_average
+
     step = 0
     initial_time = time.time()
 
@@ -445,7 +457,7 @@ try:
         prev_time = cur_time        #this variable keeps current time as previous one for the next Tm assignment
 
         #read accelerometer and gyroscope raw values and get the scaled values
-        (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z) = icm_read_all()
+        (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z, accel_scaled_x, accel_scaled_y, accel_scaled_z, mag_x, mag_y, mag_z) = icm_read_all(False)
 #        print("accel_scaled_x:%.4f, accel_scaled_y:%.4f, accel_scaled_z:%.4f " % (accel_scaled_x, accel_scaled_y, accel_scaled_z),end='')
 #        print("gyro_scaled_x:%.4f, gyro_scaled_y:%.4f, gyro_scaled_z:%.4f" % (gyro_scaled_x, gyro_scaled_y, gyro_scaled_z))
 
@@ -472,26 +484,14 @@ try:
         pitch_error = CF_y - ref[1]
         #print("Roll_Err:{:+08.4f}, Pitch_Err:{:+08.4f}  ".format(roll_error, pitch_error), end = '')
 
-        i2c_master_read(MAG_ADD, MAG_HXL, 8)
-        spi_select_bank(0)
-        raw_mag = spi_read_block(ICM_SPI, EXT_SLV_SENS_DATA_00, 8)
-        if((raw_mag[7] & 0x08) != 0x08):    #if there is a read value make the conversions
-            raw_mag_x = twos_comp((raw_mag[1] << 8) + raw_mag[0])
-            raw_mag_y = twos_comp((raw_mag[3] << 8) + raw_mag[2])
-            raw_mag_z = twos_comp((raw_mag[5] << 8) + raw_mag[4])
+        #north_deg = north_to_deg(mag_x, mag_y)
+        #make a compensation of the values, necessary due to the tilt of the sensor
+        mag_x_comp, mag_y_comp = tilt_compensation(mag_x, mag_y, mag_z, math.radians(CF_y), math.radians(CF_x))
+        north_deg_comp = north_to_deg(mag_x_comp, mag_y_comp)
 
-            mag_x = round((raw_mag_x * mag_scale - mag_x_offset),3)
-            mag_y = round((raw_mag_y * mag_scale - mag_y_offset),3)
-            mag_z = round((raw_mag_z * mag_scale - mag_z_offset),3)
-
-            #north_deg = north_to_deg(mag_x, mag_y)
-            #make a compensation of the values, necessary due to the tilt of the sensor
-            mag_x_comp, mag_y_comp = tilt_compensation(mag_x, mag_y, mag_z, math.radians(CF_y), math.radians(CF_x))
-            north_deg_comp = north_to_deg(mag_x_comp, mag_y_comp)
-
-            #print(f"MAG_XYZ:({mag_x:8.3f},{mag_y:8.3f}, {mag_z:8.3f} \t CMAG_XYZ: {mag_x_comp:8.3f}, {mag_y_comp:8.3f} \t ORIENTATION: {north_deg:.3f} \t Orientation_comp: {north_deg_comp:.3f}")
-            #print("{0:.4f} {1:.4f}".format(mag_x, mag_y))
-            #time.sleep(0.005)
+        #print(f"MAG_XYZ:({mag_x:8.3f},{mag_y:8.3f}, {mag_z:8.3f} \t CMAG_XYZ: {mag_x_comp:8.3f}, {mag_y_comp:8.3f} \t ORIENTATION: {north_deg:.3f} \t Orientation_comp: {north_deg_comp:.3f}")
+        #print("{0:.4f} {1:.4f}".format(mag_x, mag_y))
+        time.sleep(0.000500)
 
         yaw_error = north_deg_comp - ref[2]
 
@@ -655,8 +655,6 @@ except KeyboardInterrupt:
 #    pi.hardware_PWM(RFMOT_PIN,PWM_FREQ,0)
 #    pi.hardware_PWM(LBMOT_PIN,PWM_FREQ,0)
     time.sleep(0.05)
-    pi.spi_close()
-    pi.stop()
 
 finally:
     for i in range(0,len(tm_array)):
