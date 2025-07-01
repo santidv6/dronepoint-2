@@ -253,9 +253,9 @@ try:
         pi.write(RLED, 1)    #and turn on the red led
         fichero = open('/home/pi/repositories/dronepoint-2/mag_calib.txt','w')    #open the calibration text file
 		#Now there is an algorithm to detect a total turn of the drone (sensor) on the axes we will calibrate (X and Y)
+        i2c_master_read(MAG_ADD, MAG_HXL, 8)
         while (suma_deg < 360):
             print(suma_deg)
-            i2c_master_read(MAG_ADD, MAG_HXL, 8)
             spi_select_bank(0)
             raw_mag = spi_read_block(ICM_SPI, EXT_SLV_SENS_DATA_00, 8)
             if((raw_mag[7] & 0x08) != 0x08):
@@ -291,7 +291,6 @@ try:
         prev_deg = 0
         suma_deg = 0
         while (suma_deg< 360):
-            i2c_master_read(MAG_ADD, MAG_HXL, 8)
             spi_select_bank(0)
             raw_mag = spi_read_block(ICM_SPI, EXT_SLV_SENS_DATA_00, 8)
             if((raw_mag[7] & 0x08) != 0x08):
@@ -324,9 +323,9 @@ try:
     else:
         #if the pushbutton is not pressed, the offset values are read from the calibration text file
         load_mag_offsets()
+        i2c_master_read(MAG_ADD, MAG_HXL, 8)
 
     while True:
-        i2c_master_read(MAG_ADD, MAG_HXL, 8)
         spi_select_bank(0)
         raw_mag = spi_read_block(ICM_SPI, EXT_SLV_SENS_DATA_00, 8)
         if((raw_mag[7] & 0x08) != 0x08):    #if there is a read value make the conversions
